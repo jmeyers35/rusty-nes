@@ -1,10 +1,11 @@
 pub struct Instruction {
-    op: OpCode,
-    addr_mode: AddrMode,
-    cycles: u8, // cycles this instruction will take to execute
-    size: u8, // size in bytes, so CPU knows how much to incrememnt PC and whether it needs to fetch more data from memory
+    pub op: OpCode,
+    pub addr_mode: AddrMode,
+    pub cycles: u8, // cycles this instruction will take to execute
+    pub size: u8, // size in bytes, so CPU knows how much to incrememnt PC and whether it needs to fetch more data from memory
 }
 
+#[derive(Copy, Clone, PartialEq)]
 pub enum AddrMode {
     Implicit,        // No further action necessary
     Accumulator,     // Operate directony on the accumulator
@@ -21,6 +22,7 @@ pub enum AddrMode {
     IndirectIndexed, // Instruction contains zero page address of least significant byte of a 16 bit address. This is added to the Y register to get the target address
 }
 
+#[derive(Copy, Clone, PartialEq)]
 pub enum OpCode {
     ADC, // Add With Carry
     AND, // Logical AND
@@ -990,7 +992,7 @@ impl Instruction {
                 cycles: 7,
                 size: 3,
             },
-            // TODO maybe fix this
+            // TODO maybe change this?
             _ => Instruction {
                 op: OpCode::NOP,
                 addr_mode: AddrMode::Implicit,

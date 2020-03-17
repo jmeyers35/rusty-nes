@@ -7,9 +7,25 @@
 // 0x4000-0x4017 - NES APU and I/O registers
 // 0x4018-0x401F - APU and I/O functionality that's normally disabled
 // 0x4020-0xFFFF - Cartridge space: PRG ROM, PRG RAM, and mapper registers
+
+pub const ZERO_PAGE_START: u16 = 0x00;
+pub const STACK_TOP: u16 = 0x100;
+
 pub struct Memory {
-    // TODO maybe consider breaking this up into fields? e.g. internal RAM, PPU regs, etc
-    mem: Box<[u8; 65536]>,
+    mem: Box<[u8; 2048]>,
 }
 
-impl Memory {}
+impl Memory {
+    pub fn new() -> Memory {
+        Memory {
+            mem: Box::new([0xFFu8; 2048]),
+        }
+    }
+    // 2kb on-board memory
+    pub fn read(&self, addr: u16) -> u8 {
+        self.mem[(addr % 2048) as usize]
+    }
+    pub fn write(&mut self, addr: u16, data: u8) {
+        self.mem[(addr & 2048) as usize] = data;
+    }
+}
