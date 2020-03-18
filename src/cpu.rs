@@ -1,7 +1,9 @@
 use crate::instruction::*;
 use crate::mem;
 use crate::mem::Memory;
+use std::cell::RefCell;
 use std::fmt;
+use std::rc::Rc;
 
 // 6502 CPU @ 1.79 MHz
 pub struct CPU {
@@ -11,7 +13,7 @@ pub struct CPU {
     x: i8,
     y: i8,
     status: StatusRegister,
-    mem: Memory,
+    mem: Rc<RefCell<Memory>>,
     cycle: u64, // current cycle of the processor
 }
 
@@ -29,7 +31,7 @@ struct StatusRegister {
 }
 
 impl CPU {
-    pub fn new() -> CPU {
+    pub fn new(mem: Rc<RefCell<Memory>>) -> CPU {
         CPU {
             pc: 0,
             sp: 0xfd,
@@ -37,26 +39,34 @@ impl CPU {
             x: 0,
             y: 0,
             status: StatusRegister::new(),
-            mem: Memory::new(),
+            mem,
             cycle: 0,
         }
+    }
+    pub fn reset(&mut self) {
+        self.pc = 0;
+        self.sp = 0xfd;
+        self.status = StatusRegister::new();
+        self.cycle = 0
     }
     fn tick_clock(&mut self) {
         // Later: This will also tick the PPU * 3
         self.cycle += 1;
     }
     fn fetch_instruction(&mut self) -> Instruction {
-        let opcode = self.mem.read(self.pc);
+        let opcode = self.mem.borrow().ram_read(self.pc);
         self.pc += 1;
         Instruction::new(opcode)
     }
     fn push_byte(&mut self, data: u8) {
-        self.mem.write(mem::STACK_TOP + self.sp as u16, data);
+        self.mem
+            .borrow_mut()
+            .ram_write(mem::STACK_TOP + self.sp as u16, data);
         self.sp -= 1;
     }
     fn pop_byte(&mut self) -> u8 {
         self.sp += 1;
-        self.mem.read(mem::STACK_TOP + self.sp as u16)
+        self.mem.borrow().ram_read(mem::STACK_TOP + self.sp as u16)
     }
 
     fn execute_instruction(&mut self, inst: &Instruction) {
@@ -108,7 +118,7 @@ impl CPU {
                     self.status.clear_n();
                 }
                 if let Some(addr) = addr {
-                    self.mem.write(addr, result as u8);
+                    self.mem.borrow_mut().ram_write(addr, result as u8);
                 } else {
                     self.accum = result;
                 }
@@ -208,8 +218,8 @@ impl CPU {
                 self.push_byte(self.status.get_flags());
 
                 // Step 2: Load IRQ vector (held at 0xFFFE and OXFFFF) into PC
-                let irq_vec_lsb = self.mem.read(0xFFFE) as u16;
-                let irq_vec_msb = self.mem.read(0xFFFF) as u16;
+                let irq_vec_lsb = self.mem.borrow().ram_read(0xFFFE) as u16;
+                let irq_vec_msb = self.mem.borrow().ram_read(0xFFFF) as u16;
                 self.pc = irq_vec_lsb | (irq_vec_msb << 8);
 
                 // Step 3: Set B flag
@@ -316,7 +326,7 @@ impl CPU {
                 } else {
                     self.status.clear_n();
                 }
-                self.mem.write(addr.unwrap(), res as u8);
+                self.mem.borrow_mut().ram_write(addr.unwrap(), res as u8);
             }
             OpCode::DEX => {
                 self.x -= 1;
@@ -371,7 +381,7 @@ impl CPU {
                 } else {
                     self.status.clear_n();
                 }
-                self.mem.write(addr.unwrap(), res as u8);
+                self.mem.borrow_mut().ram_write(addr.unwrap(), res as u8);
             }
             OpCode::INX => {
                 self.x += 1;
@@ -466,7 +476,7 @@ impl CPU {
                 let result = (operand as u8) >> 1;
                 self.status.clear_n();
                 if let Some(addr) = addr {
-                    self.mem.write(addr, result);
+                    self.mem.borrow_mut().ram_write(addr, result);
                 } else {
                     self.accum = result as i8;
                 }
@@ -524,7 +534,7 @@ impl CPU {
                 result &= !1;
                 result |= curr_carry_flag as i8;
                 if let Some(addr) = addr {
-                    self.mem.write(addr, result as u8);
+                    self.mem.borrow_mut().ram_write(addr, result as u8);
                 } else {
                     self.accum = result;
                 }
@@ -544,7 +554,7 @@ impl CPU {
                 result &= !(1 << 7);
                 result |= (curr_carry_flag << 7) as i8;
                 if let Some(addr) = addr {
-                    self.mem.write(addr, result as u8);
+                    self.mem.borrow_mut().ram_write(addr, result as u8);
                 } else {
                     self.accum = result;
                 }
@@ -593,15 +603,17 @@ impl CPU {
             }
             OpCode::STA => {
                 let (_, addr) = self.get_operand(inst.addr_mode);
-                self.mem.write(addr.unwrap(), self.accum as u8);
+                self.mem
+                    .borrow_mut()
+                    .ram_write(addr.unwrap(), self.accum as u8);
             }
             OpCode::STX => {
                 let (_, addr) = self.get_operand(inst.addr_mode);
-                self.mem.write(addr.unwrap(), self.x as u8);
+                self.mem.borrow_mut().ram_write(addr.unwrap(), self.x as u8);
             }
             OpCode::STY => {
                 let (_, addr) = self.get_operand(inst.addr_mode);
-                self.mem.write(addr.unwrap(), self.y as u8);
+                self.mem.borrow_mut().ram_write(addr.unwrap(), self.y as u8);
             }
             OpCode::TAX => {
                 self.x = self.accum;
@@ -630,60 +642,65 @@ impl CPU {
     fn get_operand(&mut self, addr_mode: AddrMode) -> (i8, Option<u16>) {
         match addr_mode {
             AddrMode::Absolute => {
-                let addr = self.mem.read(self.pc) as u16 | (self.mem.read(self.pc + 1) << 8) as u16;
-                (self.mem.read(addr) as i8, Some(addr))
+                let addr = self.mem.borrow().ram_read(self.pc) as u16
+                    | (self.mem.borrow().ram_read(self.pc + 1) << 8) as u16;
+                (self.mem.borrow().ram_read(addr) as i8, Some(addr))
             }
             AddrMode::AbsoluteX => {
-                let addr = (self.mem.read(self.pc) as u16
-                    | (self.mem.read(self.pc + 1) << 8) as u16)
+                let addr = (self.mem.borrow().ram_read(self.pc) as u16
+                    | (self.mem.borrow().ram_read(self.pc + 1) << 8) as u16)
                     + self.x as u16;
-                (self.mem.read(addr) as i8, Some(addr))
+                (self.mem.borrow().ram_read(addr) as i8, Some(addr))
             }
             AddrMode::AbsoluteY => {
-                let addr = (self.mem.read(self.pc) as u16
-                    | (self.mem.read(self.pc + 1) << 8) as u16)
+                let addr = (self.mem.borrow().ram_read(self.pc) as u16
+                    | (self.mem.borrow().ram_read(self.pc + 1) << 8) as u16)
                     + self.y as u16;
-                (self.mem.read(addr) as i8, Some(addr))
+                (self.mem.borrow().ram_read(addr) as i8, Some(addr))
             }
-            AddrMode::Immediate => (self.mem.read(self.pc) as i8, None),
+            AddrMode::Immediate => (self.mem.borrow().ram_read(self.pc) as i8, None),
             AddrMode::ZeroPage => {
-                let addr = mem::ZERO_PAGE_START + self.mem.read(self.pc) as u16;
-                (self.mem.read(addr) as i8, Some(addr))
+                let addr = mem::ZERO_PAGE_START + self.mem.borrow().ram_read(self.pc) as u16;
+                (self.mem.borrow().ram_read(addr) as i8, Some(addr))
             }
             AddrMode::ZeroPageX => {
-                let addr =
-                    mem::ZERO_PAGE_START + ((self.mem.read(self.pc) + self.x as u8) % 255) as u16;
-                (self.mem.read(addr) as i8, Some(addr))
+                let addr = mem::ZERO_PAGE_START
+                    + ((self.mem.borrow().ram_read(self.pc) + self.x as u8) % 255) as u16;
+                (self.mem.borrow().ram_read(addr) as i8, Some(addr))
             }
             AddrMode::ZeroPageY => {
-                let addr =
-                    mem::ZERO_PAGE_START + ((self.mem.read(self.pc) + self.y as u8) as u16 % 256);
-                (self.mem.read(addr) as i8, Some(addr))
+                let addr = mem::ZERO_PAGE_START
+                    + ((self.mem.borrow().ram_read(self.pc) + self.y as u8) as u16 % 256);
+                (self.mem.borrow().ram_read(addr) as i8, Some(addr))
             }
-            AddrMode::Relative => (self.mem.read(self.pc) as i8, None),
+            AddrMode::Relative => (self.mem.borrow().ram_read(self.pc) as i8, None),
             AddrMode::Indirect => {
-                let in_addr =
-                    self.mem.read(self.pc) as u16 | (self.mem.read(self.pc + 1) << 8) as u16;
+                let in_addr = self.mem.borrow().ram_read(self.pc) as u16
+                    | (self.mem.borrow().ram_read(self.pc + 1) << 8) as u16;
                 // Original 6502 doesn't fetch Indirect addresses correctly when the indirect address vector falls on a page boundary.
                 // The logic below encodes this behavior.
                 let addr = if (in_addr + 1) % 256 == 0 {
-                    self.mem.read(in_addr) as u16 | (self.mem.read(in_addr + 1) << 8) as u16
+                    self.mem.borrow().ram_read(in_addr) as u16
+                        | (self.mem.borrow().ram_read(in_addr + 1) << 8) as u16
                 } else {
-                    self.mem.read(in_addr) as u16 | (self.mem.read(in_addr & 0xFF00) << 8) as u16
+                    self.mem.borrow().ram_read(in_addr) as u16
+                        | (self.mem.borrow().ram_read(in_addr & 0xFF00) << 8) as u16
                 };
-                (self.mem.read(addr) as i8, Some(addr))
+                (self.mem.borrow().ram_read(addr) as i8, Some(addr))
             }
             AddrMode::IndexedIndirect => {
-                let in_addr =
-                    mem::ZERO_PAGE_START + ((self.mem.read(self.pc) + self.x as u8) as u16 % 256);
-                let addr = self.mem.read(in_addr) as u16 | (self.mem.read(in_addr + 1) << 8) as u16;
-                (self.mem.read(addr) as i8, Some(addr))
+                let in_addr = mem::ZERO_PAGE_START
+                    + ((self.mem.borrow().ram_read(self.pc) + self.x as u8) as u16 % 256);
+                let addr = self.mem.borrow().ram_read(in_addr) as u16
+                    | (self.mem.borrow().ram_read(in_addr + 1) << 8) as u16;
+                (self.mem.borrow().ram_read(addr) as i8, Some(addr))
             }
             AddrMode::IndirectIndexed => {
-                let in_addr = mem::ZERO_PAGE_START + self.mem.read(self.pc) as u16;
-                let addr = self.mem.read(in_addr) as u16 | (self.mem.read(in_addr + 1) << 8) as u16;
+                let in_addr = mem::ZERO_PAGE_START + self.mem.borrow().ram_read(self.pc) as u16;
+                let addr = self.mem.borrow().ram_read(in_addr) as u16
+                    | (self.mem.borrow().ram_read(in_addr + 1) << 8) as u16;
                 (
-                    self.mem.read(addr + self.y as u16) as i8,
+                    self.mem.borrow().ram_read(addr + self.y as u16) as i8,
                     Some(addr + self.y as u16),
                 )
             }
@@ -838,4 +855,8 @@ fn signed_overflow_sub(x: i8, y: i8) -> bool {
         || (x > 0 && y > 0 && x < y && x.wrapping_sub(y) >= 0)
         || (x > 0 && y < 0 && x.wrapping_sub(y) < 0)
         || (x < 0 && y > 0 && x.wrapping_sub(y) > 0)
+}
+// checks if a page boundary is crossed
+fn page_crossed(old_addr: u16, new_addr: u16) -> bool {
+    old_addr >> 7 == new_addr >> 7
 }

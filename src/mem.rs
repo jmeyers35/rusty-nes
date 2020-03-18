@@ -12,20 +12,20 @@ pub const ZERO_PAGE_START: u16 = 0x00;
 pub const STACK_TOP: u16 = 0x100;
 
 pub struct Memory {
-    mem: Box<[u8; 2048]>,
+    ram: Box<[u8; 2048]>,
 }
 
 impl Memory {
     pub fn new() -> Memory {
         Memory {
-            mem: Box::new([0xFFu8; 2048]),
+            ram: Box::new([0xFFu8; 2048]),
         }
     }
     // 2kb on-board memory
-    pub fn read(&self, addr: u16) -> u8 {
-        self.mem[(addr % 2048) as usize]
+    pub fn ram_read(&self, addr: u16) -> u8 {
+        self.ram[(addr % 2048) as usize]
     }
-    pub fn write(&mut self, addr: u16, data: u8) {
-        self.mem[(addr & 2048) as usize] = data;
+    pub fn ram_write(&mut self, addr: u16, data: u8) {
+        self.ram[(addr & 2048) as usize] = data;
     }
 }
