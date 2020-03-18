@@ -839,8 +839,3 @@ fn signed_overflow_sub(x: i8, y: i8) -> bool {
         || (x > 0 && y < 0 && x.wrapping_sub(y) < 0)
         || (x < 0 && y > 0 && x.wrapping_sub(y) > 0)
 }
-
-// checks if a page boundary is crossed
-fn page_crossed(old_addr: u16, new_addr: u16) -> bool {
-    old_addr >> 7 == new_addr >> 7
-}
